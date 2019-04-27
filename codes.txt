@@ -1,0 +1,12 @@
+source activate ngs1
+git clone https://github.com/ne1al/ngs2-assignment.git
+cd ngs2-assignment/
+echo "Nehal Adel Abdelsalam, nehal.abdelsalam@outlook.com">user_info.md
+git add user_info.md
+git commit -m "create user_info.md"
+git push
+touch codes.txt
+
+#create a file for the assignment
+mkdir assign2 && cd assign2
+
