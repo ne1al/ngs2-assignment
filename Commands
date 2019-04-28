@@ -1,0 +1,94 @@
+#download human genome reference Release 30 (GRCh38.p12)
+wget ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_30/GRCh38.p12.genome.fa.gz
+gunzip GRCh38.p12.genome.fa.gz
+
+
+git clone https://github.com/ne1al/ngs2-assignment.git
+cd ngs2-assignment/
+echo "Nehal Adel Abdelsalam, nehal.abdelsalam@outlook.com">user_info.md
+git add user_info.md
+git commit -m "create user_info.md"
+git push
+git add codes.txt
+git commit -m "codes.txt"
+git push
+-----------------------------------------------------------------------------------------------------------------------------------
+
+source activate ngs1
+#Download packages required
+conda install -c bioconda star 
+
+#create a file for the assignment
+mkdir assign2 && cd assign2
+#download sample files (sample of one million reads)
+wget -c ftp://ftp-trace.ncbi.nih.gov/sra/sra-instant/reads/ByRun/sra/SRR/SRR879/SRR8797509/SRR8797509.sra
+fastq-dump --split-files -X 1000000 ~/assign2/SRR8797509.sra
+
+#STAR mapping
+mkdir STARmap && cd STARmap
+ln -s ~/workdir/sample_data/chr22_with_ERCC92.fa .
+ln -s ~/workdir/sample_data/chr22_with_ERCC92.gtf .
+
+STAR --runThreadN 1 --runMode genomeGenerate --genomeDir ~/assign2/STARmap --genomeFastaFiles chr22_with_ERCC92.fa --sjdbGTFfile chr22_with_ERCC92.gtf --sjdbOverhang 149
+
+STAR --runThreadN 1 --genomeDir ~/assign2/STARmap --readFilesIn ~/assign2/SRR8797509_1.fastq ~/assign2/SRR8797509_2.fastq
+STAR --runThreadN 4 --genomeDir ~/assign2/STARmap --twopassMode Basic --readFilesIn ~/assign2/SRR8797509_1.fastq ~/assign2/SRR8797509_2.fastq
+
+#Mark duplicates and sort
+for samfile in *.sam;do
+  sample=${samfile%.sam}
+  samtools view -hbo $sample.bam $samfile
+  samtools sort $sample.bam -o $sample.sorted.bam
+done
+
+java  -Xmx2g -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar MergeSamFiles I=Aligned.out.sorted.bam OUTPUT=Aligned.out_merged.sorted.bam
+
+samtools view -H Aligned.out.sorted.bam
+samtools view -H Aligned.out_merged.sorted.bam
+
+rm Aligned.out.sorted.bam
+for bamFile in *.sorted.bam;do
+  output=${bamFile%.sorted.bam}
+  samtools depth $bamFile | awk '{{sum+=$3}} END {{print "Average = ",sum/NR}}' > $output.cov
+  samtools flagstat $bamFile > $output.stat
+done
+
+for sample in *.sorted.bam;do
+  name=${sample%.sorted.bam}
+  java  -Xmx2g -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar MarkDuplicates INPUT=$sample OUTPUT=$name.dedup.bam METRICS_FILE=$name.metrics.txt
+done
+
+#Indexing
+for sample in *.dedup.bam;do
+  #name=${sample%.dedup.bam}
+  java -Xmx2g -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar BuildBamIndex VALIDATION_STRINGENCY=LENIENT INPUT=$sample
+done
+
+# Reference
+java -Xmx2g -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar CreateSequenceDictionary R=chr22_with_ERCC92.fa O=chr22_with_ERCC92.dict
+samtools faidx chr22_with_ERCC92.fa
+
+#SplitNtrim
+gatk SplitNCigarReads -R chr22_with_ERCC92.fa -I Aligned.out_merged.dedup.bam -O split.bam 
+
+#Download known variants
+wget 'ftp://ftp.ensembl.org/pub/release-96/variation/vcf/homo_sapiens/homo_sapiens-chr22.vcf.gz' -O human_chr22.vcf.gz
+gunzip human_chr22.vcf.gz
+grep "^22" human_chr22.vcf | sed 's/^22/chr22/' >> human_fam_chr22.vcf
+gatk IndexFeatureFile -F human_fam_chr22.vcf
+
+#Recalibration
+for sample in *.dedup.bam;do
+  name=${sample%.dedup.bam}
+
+  gatk --java-options "-Xmx2G" BaseRecalibrator \
+-R chr22_with_ERCC92.fa -I $sample --known-sites human_fam_chr22.vcf \
+-O $name.report
+
+  gatk --java-options "-Xmx2G" ApplyBQSR \
+-R chr22_with_ERCC92.fa -I $sample -bqsr $name.report \
+-O $name.bqsr.bam --add-output-sam-program-record --emit-original-quals
+done
+
+
+
