@@ -9,9 +9,6 @@ echo "Nehal Adel Abdelsalam, nehal.abdelsalam@outlook.com">user_info.md
 git add user_info.md
 git commit -m "create user_info.md"
 git push
-git add codes.txt
-git commit -m "codes.txt"
-git push
 -----------------------------------------------------------------------------------------------------------------------------------
 
 source activate ngs1
@@ -77,18 +74,65 @@ gunzip human_chr22.vcf.gz
 grep "^22" human_chr22.vcf | sed 's/^22/chr22/' >> human_fam_chr22.vcf
 gatk IndexFeatureFile -F human_fam_chr22.vcf
 
-#Recalibration
-for sample in *.dedup.bam;do
-  name=${sample%.dedup.bam}
+#Recalibration (failed to recalibrate, explanation  in troubleshooting file)
+#adding dictionary to vcf
+ gatk UpdateVCFSequenceDictionary \
+     -V human_chr22.vcf \
+     -R chr22_with_ERCC92.fa \
+     --output human_chr22_newcontiglines.vcf
+#sorting VCF
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar SortVcf \
+      I=human_chr22_newcontiglines.vcf \
+      O=human_chr22.sorted.vcf
+#indexing vcf
+bgzip -c human_chr22.sorted.vcf > human_chr22.sorted.vcf.gz
+tabix -p vcf human_chr22.sorted.vcf.gz
+#rename
+grep "^22" human_chr22.sorted.vcf.gz.tbi | sed 's/^22/chr22/' >> human_chr22.sorted_fam.vcf.gz.tbi
+gatk IndexFeatureFile -F human_chr22.sorted_fam.vcf.gz.tbi
+ 
+gatk BaseRecalibrator \
+   -I ~/assign2/STARmap/Aligned.out_merged.dedup.bam \
+   -R ~/assign2/STARmap/chr22_with_ERCC92.fa \
+   --known-sites ~/assign2/STARmap/human_chr22.sorted_fam.vcf.gz.tbi\
+   -O recal_data.table
 
-  gatk --java-options "-Xmx2G" BaseRecalibrator \
--R chr22_with_ERCC92.fa -I $sample --known-sites human_fam_chr22.vcf \
--O $name.report
+gatk ApplyBQSR \
+   -R ~/assign2/STARmap/chr22_with_ERCC92.fa \
+   -I ~/assign2/STARmap/Aligned.out_merged.dedup.bam \
+   --bqsr-recal_data.table \
+   -O output.bam
 
-  gatk --java-options "-Xmx2G" ApplyBQSR \
--R chr22_with_ERCC92.fa -I $sample -bqsr $name.report \
--O $name.bqsr.bam --add-output-sam-program-record --emit-original-quals
-done
+#Haplotype Caller
+ gatk --java-options "-Xmx2G" HaplotypeCaller \
+  -R chr22_with_ERCC92.fa -I Aligned.out_merged.dedup.bam\
+  --emit-ref-confidence GVCF \
+  --pcr-indel-model NONE \
+  -O $name.gvcf
+
+gatk --java-options "-Xmx4g" HaplotypeCaller  \
+   -R chr22_with_ERCC92.fa \
+   -I Aligned.out_merged.dedup.bam \
+   -O output.g.vcf.gz 
+
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar ValidateSamFile \
+      I=Aligned.out_merged.dedup.bam \
+      R=chr22_with_ERCC92.fa \
+      MODE=VERBOSE
+
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar ValidateSamFile \
+      I=Aligned.out_merged.sorted.bam \
+      R=chr22_with_ERCC92.fa \
+      MODE=VERBOSE
+
+
+samtools calmd -bAr Aligned.out_merged.dedup.bam chr22_with_ERCC92.fa > Aligned.out_merged_fixeddedup.bam
+
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar ValidateSamFile \
+      I=Aligned.out_merged_fixeddedup.bam \
+      R=chr22_with_ERCC92.fa \
+      MODE=VERBOSE
+   
 
 
 
