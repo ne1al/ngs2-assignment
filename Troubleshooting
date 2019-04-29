@@ -1,0 +1,74 @@
+- STAR recommends a 100GB storage capacity for the whole genome to be indexed. I only have 33 GB. I will index only chromosome 22. 
+
+- Due to long processing of STAR mapping, only sample of 10000 reads were extracted from SRA file.
+
+- Here "STAR --runThreadN 1 --runMode genomeGenerate --genomeDir ~/assign2/STARmap --genomeFastaFiles chr22_with_ERCC92.fa --sjdbGTFfile chr22_with_ERCC92.gtf --sjdbOverhang 149", I thought I had only one core processor. However, using $ nproc --all command, I realized I have 4 cores so I changed the thread number into 4 instead of 1 in the STAR mapping command. It saved much time.
+
+- According to the satistics calculated after mapping, length of the read is 300 bp. I believe it integrated both forward and reverse reads. Therefore, in the above command, --sjdbOverhang should be 299 instead of 149.
+
+- I thought 2-pass mapping takes two separate commands. So, I run the first mapping command then I realized I should have added "--twopassMode Basic" to the mapping command. It took less time using 4 threads and it overwrote on the results of the first mapping. 
+
+- I don't think I should merge and sort using Picard as it is only one sample I have from the SRA file. I executed it anyways.
+
+- Viewing the difference in headers between the sorted and the merged sorted files, I don't see quite a difference as it was only one sample.
+sorted:
+@HD	VN:1.4	SO:coordinate
+@SQ	SN:22	LN:50818468
+
+merged sorted:
+@HD	VN:1.6	GO:none	SO:coordinate
+@SQ	SN:22	LN:50818468
+
+- After merging relplicates and viewing the mapping statistics, surprisingly, only 75014 reads are shown!! Out of 1 million reads! I am not quite sure if I am doing it the right way or not. I don't undrstand the resulting statistics.
+
+- I don't understand why we index again at GATK even though we index using STAR
+- GATK4 updated version has a different command syntax for splitting N cigars
+- For base recalibration, I had to search for vcf for known variants of chr22 in human on Ensembl.
+- Some meta-information on the vcf downloaded :Somatic mutations found in human cancers from the COSMIC catalogue, Variants from HGMD-PUBLIC dataset December 2018
+
+- During recalibration, I run into those errors:
+A USER ERROR has occurred: Cannot read file:///home/nehal/assign2/STARmap/human_fam_chr22.vcf because no suitable codecs found
+A USER ERROR has occurred: Couldn't read file. Error was: Aligned.out_merged.report with exception: Aligned.out_merged.report (No such file or directory)
+I concluded that I should index vcf file and sort it. I added dictionary to the vcf file, sorted and indexed it. I still get the same error.
+
+- During haplotype caller, I received the following error: A USER ERROR has occurred: Argument --emit-ref-confidence has a bad value: Can only be used in single sample mode currently. Use the --sample-name argument to run on a single sample out of a multi-sample BAM file.
+Set the system property GATK_STACKTRACE_ON_USER_EXCEPTION (--java-options '-DGATK_STACKTRACE_ON_USER_EXCEPTION=true') to print the stack trace
+
+I tired different command: gatk --java-options "-Xmx4g" HaplotypeCaller  \
+   -R chr22_with_ERCC92.fa \
+   -I Aligned.out_merged.dedup.bam \
+   -O output.g.vcf.gz 
+I have the following error: java.lang.IllegalArgumentException: samples cannot be empty. I searched the error and validated the dedupbam using:
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar ValidateSamFile \
+      I=Aligned.out_merged.dedup.bam \
+      R=chr22_with_ERCC92.fa \
+      MODE=VERBOSE
+
+java -jar ~/miniconda3/envs/ngs1/share/picard-2.19.0-0/picard.jar ValidateSamFile \
+      I=Aligned.out_merged.sorted.bam \
+      R=chr22_with_ERCC92.fa \
+      MODE=VERBOSE
+I got the following error: ERROR: NM tag (nucleotide differences) is missing, Read groups is empty.
+I used the following command to fix the NM tag error:
+samtools calmd -bAr Aligned.out_merged.dedup.bam chr22_with_ERCC92.fa > Aligned.out_merged_fixeddedup.bam
+I still have the same error: ERROR: Read groups is empty
+
+I have to idea what to do
+
+
+
+
+cd assign2
+mkdir draft && cd draft
+ln -s ~/assign2/SRR8797509.sra
+fastq-dump --split-files -X 10000 ~/assign2/SRR8797509.sra
+mkdir STAR && cd STAR
+ln -s ~/workdir/sample_data/chr22_with_ERCC92.fa
+ln -s ~/workdir/sample_data/chr22_with_ERCC92.gtf
+STAR --runThreadN 1 --runMode genomeGenerate --genomeDir ~/assign2/draft/STAR --genomeFastaFiles chr22_with_ERCC92.fa --sjdbGTFfile chr22_with_ERCC92.gtf --sjdbOverhang 149
+#pass-2 STAR mapping
+STAR --runThreadN 1 --genomeDir ~/assign2/draft/STAR --readFilesIn ~/assign2/draft/SRR8797509_1.fastq ~/assign2/draft/SRR8797509_2.fastq -sjdbFileChrStartEnd ~/assign2/draft/STAR/sjdbList.out.tab
+
+
+
+
